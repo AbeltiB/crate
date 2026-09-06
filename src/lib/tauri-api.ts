@@ -10,15 +10,28 @@ export interface MediaItem {
 }
 
 export interface PlaylistInfo {
+  sourcePlaylistId: string;
+  url: string;
   title: string;
   items: MediaItem[];
 }
 
-export type DownloadStatus = "downloading" | "processing" | "done" | "failed";
+export type ItemStatus =
+  | "DISCOVERING"
+  | "READY"
+  | "QUEUED"
+  | "DOWNLOADING"
+  | "PROCESSING"
+  | "COMPLETED"
+  | "PAUSED"
+  | "RETRYING"
+  | "FAILED"
+  | "CANCELLED";
 
 export interface DownloadProgress {
-  itemId: string;
-  status: DownloadStatus;
+  mediaItemId: number;
+  sourceId: string;
+  status: ItemStatus;
   percent: number | null;
   error: string | null;
 }
@@ -27,6 +40,18 @@ export function analyzePlaylist(url: string) {
   return invoke<PlaylistInfo>("analyze_playlist", { url });
 }
 
-export function downloadItems(playlistTitle: string, items: MediaItem[]) {
-  return invoke<void>("download_items", { playlistTitle, items });
+export function startDownloadJob(playlist: PlaylistInfo, selectedIds: string[]) {
+  return invoke<number>("start_download_job", { playlist, selectedIds });
+}
+
+export function pauseJob(jobId: number) {
+  return invoke<void>("pause_job", { jobId });
+}
+
+export function resumeJob(jobId: number) {
+  return invoke<void>("resume_job", { jobId });
+}
+
+export function cancelJob(jobId: number) {
+  return invoke<void>("cancel_job", { jobId });
 }

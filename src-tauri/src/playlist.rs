@@ -13,8 +13,11 @@ pub struct MediaItem {
     pub index: usize,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct PlaylistInfo {
+    pub source_playlist_id: String,
+    pub url: String,
     pub title: String,
     pub items: Vec<MediaItem>,
 }
@@ -36,6 +39,7 @@ pub async fn analyze(bin_dir: &Path, url: &str) -> Result<PlaylistInfo> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut items = Vec::new();
     let mut playlist_title: Option<String> = None;
+    let mut source_playlist_id: Option<String> = None;
 
     for (i, line) in stdout.lines().filter(|l| !l.trim().is_empty()).enumerate() {
         let entry: serde_json::Value =
@@ -43,6 +47,9 @@ pub async fn analyze(bin_dir: &Path, url: &str) -> Result<PlaylistInfo> {
 
         if playlist_title.is_none() {
             playlist_title = entry["playlist_title"].as_str().map(String::from);
+        }
+        if source_playlist_id.is_none() {
+            source_playlist_id = entry["playlist_id"].as_str().map(String::from);
         }
 
         let id = entry["id"].as_str().unwrap_or_default().to_string();
@@ -61,6 +68,8 @@ pub async fn analyze(bin_dir: &Path, url: &str) -> Result<PlaylistInfo> {
     }
 
     Ok(PlaylistInfo {
+        source_playlist_id: source_playlist_id.unwrap_or_else(|| url.to_string()),
+        url: url.to_string(),
         title: playlist_title.unwrap_or_else(|| "Playlist".to_string()),
         items,
     })

@@ -1,38 +1,49 @@
 import { create } from "zustand";
-import type { DownloadProgress, DownloadStatus, MediaItem } from "@/lib/tauri-api";
+import type { DownloadProgress, ItemStatus, MediaItem } from "@/lib/tauri-api";
 
 export interface PlaylistItem extends MediaItem {
   selected: boolean;
-  status: DownloadStatus | "idle";
+  status: ItemStatus;
   percent: number | null;
   error: string | null;
 }
 
 interface PlaylistState {
   url: string;
+  sourcePlaylistId: string | null;
   playlistTitle: string | null;
   items: PlaylistItem[];
+  jobId: number | null;
+  jobPaused: boolean;
   setUrl: (url: string) => void;
-  setAnalyzed: (title: string, items: MediaItem[]) => void;
+  setAnalyzed: (sourcePlaylistId: string, title: string, items: MediaItem[]) => void;
   toggleItem: (id: string) => void;
   toggleAll: (selected: boolean) => void;
   applyProgress: (progress: DownloadProgress) => void;
+  setJobId: (jobId: number | null) => void;
+  setJobPaused: (paused: boolean) => void;
 }
 
 export const usePlaylistStore = create<PlaylistState>((set) => ({
   url: "",
+  sourcePlaylistId: null,
   playlistTitle: null,
   items: [],
+  jobId: null,
+  jobPaused: false,
 
   setUrl: (url) => set({ url }),
 
-  setAnalyzed: (title, items) =>
+  setAnalyzed: (sourcePlaylistId, title, items) =>
     set({
+      sourcePlaylistId,
       playlistTitle: title,
+      jobId: null,
+      jobPaused: false,
       items: items.map((item) => ({
         ...item,
         selected: true,
-        status: "idle",
+        status: "READY",
         percent: null,
         error: null,
       })),
@@ -53,9 +64,12 @@ export const usePlaylistStore = create<PlaylistState>((set) => ({
   applyProgress: (progress) =>
     set((state) => ({
       items: state.items.map((item) =>
-        item.id === progress.itemId
+        item.id === progress.sourceId
           ? { ...item, status: progress.status, percent: progress.percent, error: progress.error }
           : item,
       ),
     })),
+
+  setJobId: (jobId) => set({ jobId, jobPaused: false }),
+  setJobPaused: (jobPaused) => set({ jobPaused }),
 }));

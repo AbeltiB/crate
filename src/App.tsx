@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
-import { analyzePlaylist, downloadItems, type DownloadProgress } from "@/lib/tauri-api";
+import {
+  analyzePlaylist,
+  cancelJob,
+  pauseJob,
+  resumeJob,
+  startDownloadJob,
+  type DownloadProgress,
+} from "@/lib/tauri-api";
 import { usePlaylistStore } from "@/stores/playlist-store";
 
 function formatDuration(seconds: number | null) {
@@ -11,10 +18,50 @@ function formatDuration(seconds: number | null) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+function statusLabel(status: string, percent: number | null) {
+  switch (status) {
+    case "READY":
+      return "";
+    case "QUEUED":
+      return "queued";
+    case "DOWNLOADING":
+      return `downloading${percent != null ? " " + Math.round(percent) + "%" : ""}`;
+    case "PROCESSING":
+      return "processing…";
+    case "RETRYING":
+      return "retrying…";
+    case "COMPLETED":
+      return "done";
+    case "FAILED":
+      return "failed";
+    case "CANCELLED":
+      return "cancelled";
+    default:
+      return status.toLowerCase();
+  }
+}
+
+function statusColor(status: string) {
+  if (status === "COMPLETED") return "text-signal";
+  if (status === "FAILED") return "text-oxblood";
+  if (status === "RETRYING") return "text-wax";
+  return "text-slate";
+}
+
 function App() {
   const [urlInput, setUrlInput] = useState("");
-  const { playlistTitle, items, setAnalyzed, toggleItem, toggleAll, applyProgress } =
-    usePlaylistStore();
+  const {
+    playlistTitle,
+    items,
+    jobId,
+    jobPaused,
+    setAnalyzed,
+    toggleItem,
+    toggleAll,
+    applyProgress,
+    setJobId,
+    setJobPaused,
+  } = usePlaylistStore();
 
   useEffect(() => {
     const unlisten = listen<DownloadProgress>("download-progress", (event) => {
@@ -27,17 +74,28 @@ function App() {
 
   const analyzeMutation = useMutation({
     mutationFn: (url: string) => analyzePlaylist(url),
-    onSuccess: (data) => setAnalyzed(data.title, data.items),
+    onSuccess: (data) => setAnalyzed(data.sourcePlaylistId, data.title, data.items),
   });
 
   const downloadMutation = useMutation({
     mutationFn: () => {
-      const selected = items.filter((item) => item.selected);
-      return downloadItems(playlistTitle ?? "Playlist", selected);
+      const state = usePlaylistStore.getState();
+      const selectedIds = state.items.filter((i) => i.selected).map((i) => i.id);
+      return startDownloadJob(
+        {
+          sourcePlaylistId: state.sourcePlaylistId ?? "",
+          url: urlInput,
+          title: state.playlistTitle ?? "Playlist",
+          items: state.items,
+        },
+        selectedIds,
+      );
     },
+    onSuccess: (newJobId) => setJobId(newJobId),
   });
 
   const selectedCount = items.filter((item) => item.selected).length;
+  const isRunning = jobId != null;
 
   return (
     <main className="min-h-screen px-8 py-10">
@@ -67,9 +125,7 @@ function App() {
       </form>
 
       {analyzeMutation.isError && (
-        <p className="mt-3 font-mono text-sm text-oxblood">
-          {String(analyzeMutation.error)}
-        </p>
+        <p className="mt-3 font-mono text-sm text-oxblood">{String(analyzeMutation.error)}</p>
       )}
 
       {items.length > 0 && (
@@ -81,13 +137,15 @@ function App() {
             <div className="flex gap-3">
               <button
                 onClick={() => toggleAll(true)}
-                className="font-mono text-xs text-slate hover:text-vellum"
+                disabled={isRunning}
+                className="font-mono text-xs text-slate hover:text-vellum disabled:opacity-40"
               >
                 Select all
               </button>
               <button
                 onClick={() => toggleAll(false)}
-                className="font-mono text-xs text-slate hover:text-vellum"
+                disabled={isRunning}
+                className="font-mono text-xs text-slate hover:text-vellum disabled:opacity-40"
               >
                 Select none
               </button>
@@ -101,40 +159,70 @@ function App() {
                   type="checkbox"
                   checked={item.selected}
                   onChange={() => toggleItem(item.id)}
+                  disabled={isRunning}
                   className="accent-wax"
                 />
                 <span className="flex-1 truncate font-sans text-sm text-vellum">
                   {item.index}. {item.title}
                 </span>
-                <span className="font-mono text-xs text-slate">
-                  {formatDuration(item.duration)}
-                </span>
-                <span className="w-28 text-right font-mono text-xs text-slate">
-                  {item.status === "idle" && ""}
-                  {item.status === "downloading" &&
-                    `downloading ${item.percent != null ? Math.round(item.percent) + "%" : ""}`}
-                  {item.status === "processing" && "processing…"}
-                  {item.status === "done" && <span className="text-signal">done</span>}
-                  {item.status === "failed" && <span className="text-oxblood">failed</span>}
+                <span className="font-mono text-xs text-slate">{formatDuration(item.duration)}</span>
+                <span className={`w-32 text-right font-mono text-xs ${statusColor(item.status)}`}>
+                  {statusLabel(item.status, item.percent)}
                 </span>
               </li>
             ))}
           </ul>
 
-          <button
-            onClick={() => downloadMutation.mutate()}
-            disabled={selectedCount === 0 || downloadMutation.isPending}
-            className="mt-4 rounded bg-wax px-4 py-2 font-sans text-sm font-medium text-ink disabled:opacity-50"
-          >
-            {downloadMutation.isPending
-              ? "Downloading…"
-              : `Download selected (${selectedCount})`}
-          </button>
+          <div className="mt-4 flex items-center gap-3">
+            {!isRunning && (
+              <button
+                onClick={() => downloadMutation.mutate()}
+                disabled={selectedCount === 0 || downloadMutation.isPending}
+                className="rounded bg-wax px-4 py-2 font-sans text-sm font-medium text-ink disabled:opacity-50"
+              >
+                {downloadMutation.isPending ? "Starting…" : `Download selected (${selectedCount})`}
+              </button>
+            )}
+
+            {isRunning && !jobPaused && (
+              <button
+                onClick={() => {
+                  pauseJob(jobId);
+                  setJobPaused(true);
+                }}
+                className="rounded border border-slate/30 px-4 py-2 font-sans text-sm text-vellum"
+              >
+                Pause
+              </button>
+            )}
+
+            {isRunning && jobPaused && (
+              <button
+                onClick={() => {
+                  resumeJob(jobId);
+                  setJobPaused(false);
+                }}
+                className="rounded bg-wax px-4 py-2 font-sans text-sm font-medium text-ink"
+              >
+                Resume
+              </button>
+            )}
+
+            {isRunning && (
+              <button
+                onClick={() => {
+                  cancelJob(jobId);
+                  setJobId(null);
+                }}
+                className="rounded border border-oxblood/50 px-4 py-2 font-sans text-sm text-oxblood"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
 
           {downloadMutation.isError && (
-            <p className="mt-3 font-mono text-sm text-oxblood">
-              {String(downloadMutation.error)}
-            </p>
+            <p className="mt-3 font-mono text-sm text-oxblood">{String(downloadMutation.error)}</p>
           )}
         </section>
       )}
