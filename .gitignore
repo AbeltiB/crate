@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+src-tauri/target/
+src-tauri/gen/
+*.db
+*.db-journal
+.DS_Store
+Thumbs.db
