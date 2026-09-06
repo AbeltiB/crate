@@ -64,6 +64,7 @@ async fn start_download_job(
 ) -> Result<i64, String> {
     let jobs = state.jobs.clone();
     let db = state.db.clone();
+    let playlist_title = playlist.title.clone();
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<(i64, Vec<repository::DownloadTask>)> {
         let mut conn = db.get()?;
@@ -108,7 +109,7 @@ async fn start_download_job(
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())
     .map(|(job_id, tasks)| {
-        tauri::async_runtime::spawn(jobs.start_job(job_id, tasks));
+        tauri::async_runtime::spawn(jobs.start_job(job_id, playlist_title, tasks));
         job_id
     })
 }

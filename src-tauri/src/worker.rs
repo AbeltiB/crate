@@ -1,14 +1,15 @@
 use crate::db::DbPool;
 use crate::repository::{self, DownloadTask};
+use crate::sanitize::sanitize_component;
 use crate::status;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Semaphore;
@@ -75,7 +76,19 @@ impl JobManager {
     /// no live-pause hook, so pausing an in-flight process would mean
     /// killing it, which is what Cancel is for). Cancel does kill in-flight
     /// yt-dlp processes.
-    pub async fn start_job(self: Arc<Self>, job_id: i64, tasks: Vec<DownloadTask>) {
+    pub async fn start_job(self: Arc<Self>, job_id: i64, playlist_title: String, tasks: Vec<DownloadTask>) {
+        let output_dir = match self.app.path().document_dir() {
+            Ok(dir) => dir.join("Crate").join(sanitize_component(&playlist_title)),
+            Err(e) => {
+                eprintln!("resolving Documents dir failed: {e}");
+                return;
+            }
+        };
+        if let Err(e) = std::fs::create_dir_all(&output_dir) {
+            eprintln!("creating output dir failed: {e}");
+            return;
+        }
+
         let control = Arc::new(JobControl {
             paused: AtomicBool::new(false),
             cancelled: AtomicBool::new(false),
@@ -105,11 +118,12 @@ impl JobManager {
             let db = self.db.clone();
             let app = self.app.clone();
             let bin_dir = self.bin_dir.clone();
+            let output_dir = output_dir.clone();
             let control = control.clone();
 
             handles.push(tokio::spawn(async move {
                 let _permit = permit;
-                run_item(&app, &db, &bin_dir, &control, task).await;
+                run_item(&app, &db, &bin_dir, &output_dir, &control, task).await;
             }));
         }
 
@@ -124,7 +138,8 @@ impl JobManager {
 async fn run_item(
     app: &AppHandle,
     db: &DbPool,
-    bin_dir: &std::path::Path,
+    bin_dir: &Path,
+    output_dir: &Path,
     control: &JobControl,
     task: DownloadTask,
 ) {
@@ -137,7 +152,7 @@ async fn run_item(
         set_status(db, &task, status::DOWNLOADING);
         emit(app, &task, status::DOWNLOADING, Some(0.0), None);
 
-        match run_ytdlp(app, bin_dir, &task, control).await {
+        match run_ytdlp(app, bin_dir, output_dir, &task, control).await {
             Ok(RunOutcome::Completed { file_path, file_size }) => {
                 let conn = db.get().expect("db pool");
                 let _ = repository::mark_completed(
@@ -187,12 +202,13 @@ enum RunOutcome {
 
 async fn run_ytdlp(
     app: &AppHandle,
-    bin_dir: &std::path::Path,
+    bin_dir: &Path,
+    output_dir: &Path,
     task: &DownloadTask,
     control: &JobControl,
 ) -> Result<RunOutcome, String> {
     let ytdlp = bin_dir.join("yt-dlp.exe");
-    let output_template = format!("{} - %(title)s.%(ext)s", task.index);
+    let output_template = output_dir.join(format!("{} - %(title)s.%(ext)s", task.index));
 
     let mut child = Command::new(&ytdlp)
         .arg("-x")
