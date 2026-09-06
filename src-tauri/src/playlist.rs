@@ -4,6 +4,7 @@ use std::path::Path;
 use tokio::process::Command;
 
 #[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct MediaItem {
     pub id: String,
     pub title: String,
@@ -11,6 +12,11 @@ pub struct MediaItem {
     pub duration: Option<u64>,
     pub thumbnail: Option<String>,
     pub index: usize,
+    /// Set by the `analyze_playlist` command handler after an archive
+    /// lookup — `analyze()` itself has no DB access, so this always starts
+    /// `false` here and gets filled in one layer up.
+    #[serde(default)]
+    pub already_downloaded: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -60,6 +66,7 @@ pub async fn analyze(bin_dir: &Path, url: &str) -> Result<PlaylistInfo> {
             duration: entry["duration"].as_f64().map(|d| d as u64),
             thumbnail: entry["thumbnail"].as_str().map(String::from),
             id,
+            already_downloaded: false,
         });
     }
 

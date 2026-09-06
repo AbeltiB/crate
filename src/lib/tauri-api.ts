@@ -7,6 +7,7 @@ export interface MediaItem {
   duration: number | null;
   thumbnail: string | null;
   index: number;
+  alreadyDownloaded: boolean;
 }
 
 export interface PlaylistInfo {

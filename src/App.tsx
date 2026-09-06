@@ -133,6 +133,12 @@ function App() {
           <div className="flex items-center justify-between">
             <h2 className="font-sans text-lg text-vellum">
               {playlistTitle} <span className="text-slate">· {items.length} items</span>
+              {items.some((i) => i.alreadyDownloaded) && (
+                <span className="ml-2 font-mono text-xs text-signal">
+                  {items.filter((i) => i.alreadyDownloaded).length} downloaded ·{" "}
+                  {items.filter((i) => !i.alreadyDownloaded).length} new
+                </span>
+              )}
             </h2>
             <div className="flex gap-3">
               <button

@@ -26,9 +26,30 @@ fn ping() -> String {
     "pong".into()
 }
 
+/// Analyzes the playlist, then marks which items are already in the
+/// archive (a completed download exists) so the frontend can show a
+/// "X downloaded / Y new" summary and default those items unselected —
+/// the actual re-queue decision is still re-checked server-side in
+/// `start_download_job`, this is purely informational.
 #[tauri::command]
 async fn analyze_playlist(state: State<'_, AppState>, url: String) -> Result<PlaylistInfo, String> {
-    analyze(&state.bin_dir, &url).await.map_err(|e| e.to_string())
+    let mut playlist = analyze(&state.bin_dir, &url).await.map_err(|e| e.to_string())?;
+
+    let db = state.db.clone();
+    let source_ids: Vec<String> = playlist.items.iter().map(|i| i.id.clone()).collect();
+    let already_done = tokio::task::spawn_blocking(move || {
+        let conn = db.get()?;
+        repository::already_completed_source_ids(&conn, &source_ids)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    for item in &mut playlist.items {
+        item.already_downloaded = already_done.contains(&item.id);
+    }
+
+    Ok(playlist)
 }
 
 /// Persists the (possibly re-analyzed) playlist and its items, queues

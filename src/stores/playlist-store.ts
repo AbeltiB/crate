@@ -42,8 +42,8 @@ export const usePlaylistStore = create<PlaylistState>((set) => ({
       jobPaused: false,
       items: items.map((item) => ({
         ...item,
-        selected: true,
-        status: "READY",
+        selected: !item.alreadyDownloaded,
+        status: item.alreadyDownloaded ? "COMPLETED" : "READY",
         percent: null,
         error: null,
       })),
