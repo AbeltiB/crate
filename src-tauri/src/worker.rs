@@ -211,6 +211,14 @@ async fn run_ytdlp(
     let output_template = output_dir.join(format!("{} - %(title)s.%(ext)s", task.index));
 
     let mut child = Command::new(&ytdlp)
+        // yt-dlp is Python-based; when its stdout is piped (not a real
+        // console) Python falls back to the Windows console codepage for
+        // text it writes directly (like our --print path line below),
+        // silently mangling non-ASCII titles. --dump-json elsewhere is
+        // immune (JSON \uXXXX-escapes everything), but this raw print
+        // isn't, so force UTF-8 I/O on the child explicitly.
+        .env("PYTHONUTF8", "1")
+        .env("PYTHONIOENCODING", "utf-8")
         .arg("-x")
         .arg("--audio-format")
         .arg("mp3")

@@ -32,6 +32,8 @@ pub async fn analyze(bin_dir: &Path, url: &str) -> Result<PlaylistInfo> {
     let ytdlp = bin_dir.join("yt-dlp.exe");
 
     let output = Command::new(&ytdlp)
+        .env("PYTHONUTF8", "1")
+        .env("PYTHONIOENCODING", "utf-8")
         .args(["--flat-playlist", "--dump-json", "--no-warnings", url])
         .output()
         .await
