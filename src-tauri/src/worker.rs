@@ -211,14 +211,6 @@ async fn run_ytdlp(
     let output_template = output_dir.join(format!("{} - %(title)s.%(ext)s", task.index));
 
     let mut child = Command::new(&ytdlp)
-        // yt-dlp is Python-based; when its stdout is piped (not a real
-        // console) Python falls back to the Windows console codepage for
-        // text it writes directly (like our --print path line below),
-        // silently mangling non-ASCII titles. --dump-json elsewhere is
-        // immune (JSON \uXXXX-escapes everything), but this raw print
-        // isn't, so force UTF-8 I/O on the child explicitly.
-        .env("PYTHONUTF8", "1")
-        .env("PYTHONIOENCODING", "utf-8")
         .arg("-x")
         .arg("--audio-format")
         .arg("mp3")
@@ -233,8 +225,6 @@ async fn run_ytdlp(
         .arg("download:%(progress)j")
         .arg("--progress-template")
         .arg("postprocess:%(progress)j")
-        .arg("--print")
-        .arg("after_move:%(filepath)s")
         .arg("--no-playlist")
         .arg("-o")
         .arg(&output_template)
@@ -253,7 +243,6 @@ async fn run_ytdlp(
         buf
     });
 
-    let mut final_path: Option<String> = None;
     let mut lines = BufReader::new(stdout).lines();
 
     loop {
@@ -283,11 +272,8 @@ async fn run_ytdlp(
                     let status = if prefix == "postprocess" { status::PROCESSING } else { status::DOWNLOADING };
                     emit(app, task, status, percent, None);
                 }
-                continue;
             }
         }
-        // Not a progress line: this is our `--print after_move:...` output.
-        final_path = Some(line);
     }
 
     let wait_result = child.wait().await;
@@ -295,9 +281,20 @@ async fn run_ytdlp(
 
     match wait_result {
         Ok(status) if status.success() => {
-            let file_path = final_path.ok_or_else(|| "yt-dlp succeeded but produced no output path".to_string())?;
+            // Don't trust yt-dlp's own printed path for this: on this class of
+            // Windows setup, Python silently drops non-ASCII characters when
+            // writing plain text to a piped stdout (confirmed at the byte
+            // level — --dump-json is unaffected since it \uXXXX-escapes
+            // everything, but a raw --print line isn't). The real file on
+            // disk always has the correct Unicode name, so find it by its
+            // index prefix instead, which is always plain ASCII.
+            let file_path = find_output_file(output_dir, task.index)
+                .ok_or_else(|| "yt-dlp succeeded but the output file could not be found".to_string())?;
             let file_size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
-            Ok(RunOutcome::Completed { file_path, file_size })
+            Ok(RunOutcome::Completed {
+                file_path: file_path.to_string_lossy().into_owned(),
+                file_size,
+            })
         }
         Ok(_) => Err(if stderr_text.trim().is_empty() {
             "yt-dlp exited with a non-zero status".to_string()
@@ -306,6 +303,23 @@ async fn run_ytdlp(
         }),
         Err(e) => Err(e.to_string()),
     }
+}
+
+/// Finds the completed download by its (always plain-ASCII) index prefix
+/// rather than trusting any path yt-dlp prints — see the comment at the
+/// call site for why.
+fn find_output_file(dir: &Path, index: i64) -> Option<PathBuf> {
+    let prefix = format!("{index} - ");
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with(&prefix) && name.ends_with(".mp3")
+        })
+        .max_by_key(|entry| entry.metadata().and_then(|m| m.modified()).ok())
+        .map(|entry| entry.path())
 }
 
 fn set_status(db: &DbPool, task: &DownloadTask, new_status: &str) {
