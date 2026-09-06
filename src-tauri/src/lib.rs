@@ -154,29 +154,6 @@ pub fn run() {
             let jobs = JobManager::new(db.clone(), handle, bin_dir.clone(), DEFAULT_CONCURRENCY);
 
             app.manage(AppState { bin_dir, db, jobs });
-
-            // TEMPORARY end-to-end test hook (no UI automation available in
-            // this environment) — remove once verified. Set CRATE_TEST_URL
-            // to auto-run a real analyze + download job on launch.
-            if let Ok(test_url) = std::env::var("CRATE_TEST_URL") {
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    let state = handle.state::<AppState>();
-                    eprintln!("[test] analyzing {test_url}");
-                    match playlist::analyze(&state.bin_dir, &test_url).await {
-                        Ok(playlist) => {
-                            eprintln!("[test] analyzed: {} items, title={}", playlist.items.len(), playlist.title);
-                            let selected_ids: Vec<String> = playlist.items.iter().map(|i| i.id.clone()).collect();
-                            match start_download_job(state, playlist, selected_ids).await {
-                                Ok(job_id) => eprintln!("[test] started job {job_id}"),
-                                Err(e) => eprintln!("[test] start_download_job failed: {e}"),
-                            }
-                        }
-                        Err(e) => eprintln!("[test] analyze failed: {e:#}"),
-                    }
-                });
-            }
-
             Ok(())
         })
         .run(tauri::generate_context!())
